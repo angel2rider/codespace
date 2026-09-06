@@ -62,7 +62,7 @@ Repo → **Actions** → *Download YouTube video* → **Run workflow** with:
 | `hf_namespace` | ✔ | — | HF username or org, e.g. `Angelrider` |
 | `hf_bucket` | | `video-downloads` | Created automatically (private on first creation) |
 
-A second workflow, **Probe formats** (`.github/workflows/probe.yml`), runs `yt-dlp -J` on a URL and dumps the available resolutions (height + fps) to `probes/probe-<nonce>.json` in the bucket — that's what powers the site's resolution picker.
+The site's resolution picker is powered by a **probe pipeline** (see [Resolution checks](#resolution-checks) below). The **Probe formats** workflow (`.github/workflows/probe.yml`) is the fallback path — it runs `yt-dlp -J` on a runner and POSTs the result back to the Worker when the VPS agent is unavailable.
 
 ### CLI
 
@@ -79,9 +79,21 @@ gh run watch                     # or grab the run id from `gh run list`
 ## What you get
 
 - **Naming:** `<YouTube title> [<video id>] [<height>p].mp4` for video (the height suffix keeps resolution variants of the same video distinct), `<YouTube title> [<video id>].mp3` for audio.
-- **Resolution picking:** the site probes available heights first (via the probe workflow), then downloads exactly what you pick — or the next available height below it if YouTube doesn't serve that exact size.
+- **Resolution picking:** the site probes available heights first, then downloads exactly what you pick — or the next available height below it if YouTube doesn't serve that exact size.
 - **Embedded metadata** (visible in VLC/Plex/Infuse): title, uploader, date, thumbnail, and YouTube chapters (`--embed-metadata --embed-chapters --embed-thumbnail`).
 - **Storage:** files land in the bucket at `huggingface.co/buckets/<namespace>/<bucket>` and are served by HF's CDN. Re-downloading identical content is nearly instant thanks to Xet chunk-level deduplication (only changed chunks upload).
+
+## Resolution checks
+
+When you paste a URL, the Worker asks yt-dlp what resolutions the video has before starting a download. Three layers keep this fast and reliable:
+
+1. **VPS agent (fast path, ~20 s):** a tiny agent on an Oracle free-tier box holds a WebSocket to the Worker's `ProbeQueue` Durable Object. Jobs are pushed to it the instant they're queued; it runs `yt-dlp -J` (metadata only) and POSTs the result straight back. Setup and operations: [`vps-agent/README.md`](vps-agent/README.md).
+2. **GitHub Actions (fallback):** if the agent doesn't answer within 30 s, the Worker dispatches `probe.yml`, which runs the same extraction on a runner.
+3. **Result cache (<0.5 s):** successful probes are cached by video id inside the Durable Object for 1 h, so re-checking the same video is instant.
+
+The UI also shows an instant title + thumbnail preview (via YouTube's oEmbed endpoint) while formats load.
+
+Architecture note: the queue lives in a Durable Object rather than Workers KV because KV is eventually consistent (reads can be ~60 s stale across colos), which silently broke job handoff.
 
 ## Performance
 

@@ -9,9 +9,14 @@ WORKER_URL = "https://yt-dl-worker.vivekpereiraalbert.workers.dev"
 [observability]
 enabled = true
 
-[[kv_namespaces]]
-binding = "PROBES"
-id = "7bc9f25243e64844a4c82e6a74adaf33"
+# Strongly-consistent probe job queue (KV was too slow/stale for handoff).
+[[durable_objects.bindings]]
+name = "PROBE_QUEUE"
+class_name = "ProbeQueue"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ProbeQueue"]
 
 [[rules]]
 type = "Text"

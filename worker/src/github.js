@@ -1,4 +1,7 @@
 // GitHub + Hugging Face API helpers for the downloader Worker.
+// Probe flow: jobs are queued in KV; a small VPS agent long-polls
+// /api/probe/claim and POSTs results straight back (fast path, ~5s).
+// If no agent claims within ~20s, /api/probe falls back to GitHub Actions.
 
 const REPO = "angel2rider/codespace";
 const WORKFLOW = "download.yml";
@@ -101,10 +104,72 @@ export async function proxyFile(path) {
   return new Response(upstream.body, { status: 200, headers });
 }
 
-// Trigger the probe workflow. The runner POSTs the result straight back to
-// this Worker (see /api/probe/result), which stores it in KV under the nonce.
+// The probe queue lives in a Durable Object (strongly consistent - KV's
+// eventual consistency broke the job handoff). One global instance is all
+// this app needs; SQLite inside it keeps jobs/results.
+export function getProbeQueue(env) {
+  return env.PROBE_QUEUE.get(env.PROBE_QUEUE.idFromName("global"));
+}
+
+// Extract a video id from a YouTube URL (watch, shorts, youtu.be).
+export function videoId(url) {
+  const m = url.match(/(?:v=|shorts\/|youtu\.be\/)([\w-]{6,})/);
+  return m ? m[1] : null;
+}
+
+// Instant preview metadata from YouTube's public oEmbed endpoint (~200ms),
+// so the UI can show title + thumbnail while the real probe runs.
+export async function oembedPreview(url) {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?url=${encodeURIComponent(url)}&format=json`,
+      { signal: AbortSignal.timeout(4_000) }
+    );
+    if (!res.ok) return null;
+    const d = await res.json();
+    return { title: d.title || "", thumbnail: d.thumbnail_url || "" };
+  } catch {
+    return null;
+  }
+}
+
+// Enqueue a probe job. The VPS agent holds a WebSocket to the DO, so jobs
+// are pushed to it instantly; REST claim is the fallback. Returns a nonce
+// plus an instant oEmbed preview; if this video was probed recently, the
+// cached result is returned instead (ready: true, no agent round-trip).
 export async function probeVideo(env, url) {
-  const nonce = crypto.randomUUID().slice(0, 8);
+  const id = videoId(url);
+  const q = getProbeQueue(env);
+  const cachedNonce = await q.cachedNonce(id);
+  if (cachedNonce) {
+    return { nonce: cachedNonce, cached: true, preview: null };
+  }
+  const { nonce } = await q.enqueue(url);
+  const preview = await oembedPreview(url);
+  return { nonce, cached: false, preview };
+}
+
+// Agent long-poll: wait up to ~10s for a job (the DO wakes us when one
+// arrives), then hand it over.
+export async function claimProbeJob(env, waitMs = 10_000) {
+  return getProbeQueue(env).claim();
+}
+
+// Agent (or fallback runner) posts the finished probe here.
+export async function submitProbe(env, payload) {
+  const { nonce, ...data } = payload;
+  return getProbeQueue(env).submit(nonce, data);
+}
+
+// Read a probe result. Absent = still running.
+export async function getProbe(env, nonce) {
+  if (!/^[a-f0-9]{8}$/.test(nonce) || !env.PROBE_QUEUE) return { ready: false };
+  return getProbeQueue(env).read(nonce);
+}
+
+// Fallback probe path: dispatch the GitHub Actions probe workflow (used when
+// the VPS agent does not claim the job within 20s).
+export async function dispatchProbe(env, url, nonce) {
   const dispatchRes = await fetch(
     `https://api.github.com/repos/${REPO}/actions/workflows/${PROBE_WORKFLOW}/dispatches`,
     {
@@ -117,14 +182,6 @@ export async function probeVideo(env, url) {
     throw new Error(`Probe dispatch failed (${dispatchRes.status})`);
   }
   return { nonce };
-}
-
-// Read a probe result from KV. Absent key = still running.
-export async function getProbe(env, nonce) {
-  if (!/^[a-f0-9]{8}$/.test(nonce) || !env.PROBES) return { ready: false };
-  const data = await env.PROBES.get(`probe:${nonce}`, "json");
-  if (!data) return { ready: false };
-  return { ready: true, ...data };
 }
 
 // Map a run to progress info + result links.

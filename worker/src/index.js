@@ -1,6 +1,18 @@
 // yt-dl Worker: serves the downloader site, triggers GitHub Actions, tracks progress.
 
-import { triggerDownload, getStatus, proxyFile, probeVideo, getProbe } from "./github.js";
+import {
+  triggerDownload,
+  getStatus,
+  proxyFile,
+  probeVideo,
+  getProbe,
+  submitProbe,
+  claimProbeJob,
+  dispatchProbe,
+} from "./github.js";
+
+// Required: wrangler discovers DO classes from the worker's exports.
+export { ProbeQueue } from "./probe-queue.js";
 
 const HTML = `<!DOCTYPE html>
 <html lang="en">
@@ -212,7 +224,7 @@ const HTML = `<!DOCTYPE html>
     vwrap.style.display = "none";
     chipsBox.innerHTML = "";
     probeState.style.display = "flex";
-    probeState.innerHTML = '<div class="spin"></div><span>Fetching video info… (up to a minute)</span>';
+    probeState.innerHTML = '<div class="spin"></div><span>Fetching video info…</span>';
     checkBtn.disabled = true;
     statusBox.style.display = "none";
 
@@ -222,6 +234,20 @@ const HTML = `<!DOCTYPE html>
       body: JSON.stringify({ url: urlInput.value })
     }).then(function(r) { return r.json(); }).then(function(d) {
       if (d.error) throw new Error(d.error);
+      // Already probed recently: the full result came back instantly.
+      if (d.ready) { renderProbe(d); return; }
+      // Otherwise show the instant preview (title + thumbnail) while the
+      // formats are being read.
+      var pv = d.preview;
+      if (pv && pv.title) {
+        probeState.style.display = "none";
+        vwrap.style.display = "block";
+        var img = $("vthumb");
+        if (pv.thumbnail) { img.src = pv.thumbnail; img.style.display = "block"; }
+        $("vtitle").textContent = pv.title;
+        $("vdur").textContent = "reading available resolutions…";
+        chipsBox.innerHTML = '<div class="checking"><div class="spin"></div><span>Reading formats…</span></div>';
+      }
       pollProbe(d.nonce, 0);
     }).catch(function(ex) {
       probeState.innerHTML = '<span style="color:#f87171">' + ex.message + '</span>';
@@ -255,7 +281,13 @@ const HTML = `<!DOCTYPE html>
     chipsBox.innerHTML = "";
     var res = (d.resolutions || []).slice(0, 7);
     if (!res.length) {
-      chipsBox.innerHTML = '<span style="color:#f87171;font-size:13.5px">No downloadable video resolutions found — try the audio option.</span>';
+      var msg = d.error || "No downloadable video resolutions found — try the audio option.";
+      var span = document.createElement("span");
+      span.style.cssText = "color:#f87171;font-size:13.5px";
+      span.textContent = msg;
+      chipsBox.appendChild(span);
+      checkBtn.disabled = false;
+      return;
     }
     res.forEach(function(r) {
       addChip(r.h + "p" + (r.fps ? " " + r.fps + "fps" : ""), String(r.h), r.h >= 1080);
@@ -421,8 +453,10 @@ export default {
       }
     }
 
-    // Ask yt-dlp what resolutions the video has (runs on a runner, result
-    // lands in the bucket; the UI polls GET /api/probe/:nonce for it).
+    // Ask yt-dlp what resolutions the video has. A VPS agent long-polls
+    // /api/probe/claim and usually answers in ~5s; if nothing claims the job
+    // within 20s we fall back to a GitHub Actions probe so the feature still
+    // works when the agent is down (just slower, like before).
     if (url.pathname === "/api/probe" && request.method === "POST") {
       let body;
       try {
@@ -435,7 +469,43 @@ export default {
         return json({ error: "Please provide a valid YouTube URL" }, 400);
       }
       try {
-        return json(await probeVideo(env, link));
+        const res = await probeVideo(env, link);
+        // Recently probed video: return the cached result right away.
+        if (res.cached) {
+          const probe = await getProbe(env, res.nonce);
+          return json({ nonce: res.nonce, fast: true, ...probe });
+        }
+        const { nonce, preview } = res;
+        const deadline = Date.now() + 30_000; // VPS usually answers in ~20s
+        while (Date.now() < deadline) {
+          const probe = await getProbe(env, nonce);
+          if (probe.ready) return json({ nonce, preview, fast: true, ...probe });
+          await new Promise((r) => setTimeout(r, 1_000));
+        }
+        await dispatchProbe(env, link, nonce); // fallback path
+        return json({ nonce, preview, fast: false });
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    // Agent WebSocket: new jobs are PUSHED over this connection the moment
+    // they are queued (the REST claim below is only a fallback when the
+    // socket is down). The DO checks the secret itself.
+    if (url.pathname === "/api/probe/socket") {
+      const stub = env.PROBE_QUEUE.get(env.PROBE_QUEUE.idFromName("global"));
+      const proxyURL = new URL(request.url);
+      proxyURL.searchParams.set("secret", env.WORKER_SECRET);
+      return stub.fetch(new Request(proxyURL, request));
+    }
+
+    // VPS agent long-poll fallback: hands over one queued job (or 200 null).
+    if (url.pathname === "/api/probe/claim" && request.method === "POST") {
+      if (request.headers.get("x-probe-secret") !== env.WORKER_SECRET) {
+        return json({ error: "Unauthorized" }, 401);
+      }
+      try {
+        return json((await claimProbeJob(env)) || { job: null });
       } catch (e) {
         return json({ error: e.message }, 502);
       }
@@ -466,17 +536,16 @@ export default {
         return json({ error: "Missing or invalid nonce" }, 400);
       }
       try {
-        await env.PROBES.put(
-          `probe:${body.nonce}`,
-          JSON.stringify({
-            title: body.title || "",
-            id: body.id || "",
-            thumbnail: body.thumbnail || "",
-            duration: body.duration || 0,
-            resolutions: body.resolutions || [],
-          }),
-          { expirationTtl: 3600 }
-        );
+        await submitProbe(env, {
+          nonce: body.nonce,
+          title: body.title || "",
+          id: body.id || "",
+          thumbnail: body.thumbnail || "",
+          duration: body.duration || 0,
+          isLive: !!body.isLive,
+          resolutions: body.resolutions || [],
+          error: body.error || "",
+        });
         return json({ ok: true });
       } catch (e) {
         return json({ error: e.message }, 502);
