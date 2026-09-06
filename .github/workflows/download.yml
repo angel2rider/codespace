@@ -28,17 +28,30 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # yt-dlp needs ffmpeg to merge separate video/audio streams
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-
       # yt-dlp needs a JS runtime for YouTube's PO-token checks
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
 
-      - name: Install yt-dlp
-        run: pipx install yt-dlp
+      # All tools fetched in parallel: standalone yt-dlp binary + static
+      # ffmpeg (avoids slow pipx/apt) + huggingface_hub CLI for the upload.
+      - name: Prepare tools
+        run: |
+          set -e
+          (
+            curl -sL --max-time 90 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+            chmod +x yt-dlp
+          ) &
+          (
+            mkdir -p ffmpeg-bin
+            curl -sL --max-time 120 -o /tmp/ff.tar.xz https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-master-latest-linux64-gpl.tar.xz
+            tar -xJf /tmp/ff.tar.xz -C ffmpeg-bin --strip-components=1 --wildcards '*/bin/ffmpeg' '*/bin/ffprobe'
+          ) &
+          pipx install -q huggingface_hub &
+          wait
+          export PATH="$PWD/ffmpeg-bin:$PATH"
+          ffmpeg -version | head -1
+          ./yt-dlp --version
 
       # Optional: decode browser cookies from the YT_COOKIES secret
       # (base64 of your cookies.txt) so YouTube doesn't block the runner.
@@ -46,28 +59,29 @@ jobs:
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" | base64 -d > cookies.txt
-            echo "Cookies secret found, decoded to cookies.txt"
-          else
-            echo "No YT_COOKIES secret set - downloading without cookies"
           fi
 
       - name: Download video
         run: |
+          export PATH="$PWD/ffmpeg-bin:$PATH"
           COOKIES_ARGS=""
           if [ -f cookies.txt ]; then
             COOKIES_ARGS="--cookies cookies.txt"
-            echo "Cookies: loaded"
-          else
-            echo "Cookies: NOT loaded"
           fi
           if [ "${{ inputs.format }}" == "audio" ]; then
-            yt-dlp --remote-components ejs:github $COOKIES_ARGS -f "ba/b" -x --audio-format mp3 -o "download.%(ext)s" "${{ inputs.url }}"
+            FMT="-f ba/b -x --audio-format mp3"
           else
-            yt-dlp --remote-components ejs:github $COOKIES_ARGS -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
+            FMT="-f bv*+ba/b --merge-output-format mp4"
           fi
-
-      - name: Install Hugging Face CLI
-        run: pipx install huggingface_hub
+          # web_embedded skips YouTube's ad-wait sleep (~15-19s) at equal quality.
+          # Fall back to the default client (handles multiple player responses)
+          # if a particular video is unavailable via web_embedded.
+          run_dl() {
+            ./yt-dlp --remote-components ejs:github $COOKIES_ARGS \
+              --extractor-args "youtube:player_client=$1" \
+              $FMT -o "download.%(ext)s" "${{ inputs.url }}"
+          }
+          run_dl web_embedded || run_dl default
 
       - name: Upload to Hugging Face bucket
         env:
