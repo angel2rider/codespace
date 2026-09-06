@@ -14,6 +14,13 @@ on:
         options:
           - video
           - audio
+      hf_namespace:
+        description: 'Your Hugging Face username or organization'
+        required: true
+      hf_bucket:
+        description: 'Hugging Face bucket name (created automatically)'
+        required: false
+        default: 'video-downloads'
 
 jobs:
   download:
@@ -55,8 +62,23 @@ jobs:
             yt-dlp --remote-components ejs:github $COOKIES_ARGS -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
           fi
 
-      - name: Upload result
-        uses: actions/upload-artifact@v4
-        with:
-          name: download
-          path: download.*
+      - name: Install Hugging Face CLI
+        run: pipx install huggingface_hub
+
+      - name: Upload to Hugging Face bucket
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          if [ "${{ inputs.format }}" == "audio" ]; then
+            FILE="download.mp3"
+          else
+            FILE="download.mp4"
+          fi
+          BUCKET="${{ inputs.hf_namespace }}/${{ inputs.hf_bucket }}"
+          DEST="hf://buckets/$BUCKET/video-$(date +%Y%m%d-%H%M%S).${FILE##*.}"
+
+          # Create the bucket if it doesn't exist yet (private by default)
+          hf buckets create "$BUCKET" --private 2>/dev/null || echo "Bucket already exists"
+
+          hf buckets cp "$FILE" "$DEST"
+          echo "Uploaded to: $DEST"
