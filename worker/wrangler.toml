@@ -1,6 +1,7 @@
 name = "yt-dl-worker"
 main = "src/index.js"
 compatibility_date = "2026-09-01"
+account_id = "cc4668baab24a44ebe315a3807279d15"
 
 [observability]
 enabled = true
