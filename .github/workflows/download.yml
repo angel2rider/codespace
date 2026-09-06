@@ -29,12 +29,24 @@ jobs:
       - name: Install yt-dlp
         run: pipx install yt-dlp
 
+      # Optional: decode browser cookies from the YT_COOKIES secret
+      # (base64 of your cookies.txt) so YouTube doesn't block the runner.
+      - name: Set up cookies
+        run: |
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" | base64 -d > cookies.txt
+          fi
+
       - name: Download video
         run: |
+          COOKIES_ARGS=""
+          if [ -f cookies.txt ]; then
+            COOKIES_ARGS="--cookies cookies.txt"
+          fi
           if [ "${{ inputs.format }}" == "audio" ]; then
-            yt-dlp -f "ba/b" -x --audio-format mp3 -o "download.%(ext)s" "${{ inputs.url }}"
+            yt-dlp $COOKIES_ARGS -f "ba/b" -x --audio-format mp3 -o "download.%(ext)s" "${{ inputs.url }}"
           else
-            yt-dlp -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
+            yt-dlp $COOKIES_ARGS -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
           fi
 
       - name: Upload result
