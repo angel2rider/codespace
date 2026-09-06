@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tube Pull · High Speed Video & Audio Downloader</title>
+  <meta name="description" content="Download YouTube videos and audio at full speed with zero ads or tracking.">
+  <!-- STYLES -->
+</head>
+<body>
+  <div class="container">
+    <main class="card" role="region" aria-label="YouTube Downloader">
+      <header class="header">
+        <div class="logo-row">
+          <div class="brand">
+            <div class="brand-icon" aria-hidden="true">▶</div>
+            <h1>Tube Pull</h1>
+          </div>
+          <span class="badge-version">v2.0</span>
+        </div>
+        <p class="subtitle">Fast, serverless YouTube downloader. Pull MP4 video or MP3 audio directly to your device.</p>
+      </header>
+
+      <form id="f" autocomplete="off">
+        <div class="form-group">
+          <!-- Input Bar with integrated Paste & Clear -->
+          <div class="input-wrapper">
+            <div class="input-icon" aria-hidden="true">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path>
+                <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path>
+              </svg>
+            </div>
+            <input
+              id="url"
+              type="url"
+              required
+              placeholder="Paste YouTube video or playlist link…"
+              aria-label="YouTube video URL"
+              spellcheck="false"
+            />
+            <div class="input-actions">
+              <button type="button" id="btnClear" class="btn-icon-subtle" title="Clear input" aria-label="Clear input" style="display:none;">✕</button>
+              <button type="button" id="btnPaste" class="btn-icon-subtle btn-paste" title="Paste from clipboard" aria-label="Paste from clipboard">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"></path>
+                  <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+                </svg>
+                Paste
+              </button>
+            </div>
+          </div>
+
+          <!-- Video Preview Card (oEmbed) -->
+          <div id="videoPreview" class="video-preview hidden" aria-live="polite">
+            <div class="preview-thumb-container">
+              <img id="previewThumb" class="preview-thumb" src="" alt="Video thumbnail preview">
+            </div>
+            <div class="preview-info">
+              <span id="previewTitle" class="preview-title">Video title loading…</span>
+              <span id="previewAuthor" class="preview-author">
+                <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 14.5v-9l6 4.5-6 4.5z"/>
+                </svg>
+                <span id="previewAuthorName">Channel</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Format Selector & Action Button -->
+          <div class="controls-row">
+            <fieldset class="segmented-control" aria-label="Download format">
+              <legend class="visually-hidden" style="display:none;">Choose download format</legend>
+              <div class="segmented-option">
+                <input type="radio" id="formatVideo" name="format" value="video" checked>
+                <label for="formatVideo" class="segmented-label">
+                  <span aria-hidden="true">🎬</span> Video · MP4
+                </label>
+              </div>
+              <div class="segmented-option">
+                <input type="radio" id="formatAudio" name="format" value="audio">
+                <label for="formatAudio" class="segmented-label">
+                  <span aria-hidden="true">🎵</span> Audio · MP3
+                </label>
+              </div>
+            </fieldset>
+
+            <button id="btnPull" class="btn-pull" type="submit">
+              <span id="btnPullText">Pull</span>
+            </button>
+          </div>
+        </div>
+      </form>
+
+      <!-- Realtime Progress Status Section -->
+      <section id="statusSection" class="status-section hidden" aria-live="polite">
+        <div class="progress-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" id="progressTrack">
+          <div id="progressBarFill" class="progress-bar-fill"></div>
+        </div>
+        <div class="stage-row">
+          <span class="stage-title" id="stageTitle">Starting…</span>
+          <span class="elapsed-time" id="elapsedTime"></span>
+        </div>
+        <div class="step-list" id="stepList"></div>
+        <div id="errorCard" class="error-card hidden" role="alert">
+          <span aria-hidden="true">⚠️</span>
+          <span id="errorMessage"></span>
+        </div>
+        <div id="resultsCard" class="results-card hidden">
+          <div class="results-heading">Ready to download</div>
+          <div id="downloadList"></div>
+        </div>
+      </section>
+
+      <!-- Recent Downloads History Drawer -->
+      <section id="historySection" class="history-section" aria-label="Recent Downloads">
+        <button type="button" id="btnToggleHistory" class="history-header" aria-expanded="false" aria-controls="historyBody">
+          <span class="history-summary">
+            <span>Recent Downloads</span>
+            <span id="historyBadge" class="history-badge">0</span>
+          </span>
+          <span id="historyArrow" aria-hidden="true">▾</span>
+        </button>
+        <div id="historyBody" class="history-body hidden">
+          <div id="historyList"></div>
+          <div style="display: flex; justify-content: flex-end; margin-top: 4px;">
+            <button type="button" id="btnClearHistory" class="btn-clear-history">Clear History</button>
+          </div>
+        </div>
+      </section>
+
+      <footer class="footer">
+        Powered by GitHub Actions · Private Edge Storage · No Registration Required
+      </footer>
+    </main>
+  </div>
+
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+  <!-- SCRIPT -->
+</body>
+</html>

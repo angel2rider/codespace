@@ -7,12 +7,18 @@ on:
         description: 'Video or playlist URL'
         required: true
       format:
-        description: 'Format: video (mp4) or audio-only (mp3)'
+        description: 'Format: video (mp4), audio-only (mp3), or a specific resolution'
         required: false
-        default: 'video'
+        default: 'best'
         type: choice
         options:
-          - video
+          - best
+          - 2160
+          - 1440
+          - 1080
+          - 720
+          - 480
+          - 360
           - audio
       hf_namespace:
         description: 'Your Hugging Face username or organization'
@@ -75,8 +81,12 @@ jobs:
           fi
           if [ "${{ inputs.format }}" == "audio" ]; then
             FMT="-f ba/b -x --audio-format mp3"
-          else
+          elif [ "${{ inputs.format }}" == "best" ]; then
             FMT="-f bv*+ba/b --merge-output-format mp4"
+          else
+            # Download exactly the requested resolution (or the next one down).
+            H="${{ inputs.format }}"
+            FMT="-f bv*[height<=$H]+ba/b[height<=$H]/bv*[height<=$H]+ba/b --merge-output-format mp4"
           fi
           # Name files after the video title (ID suffix keeps them unique)
           # and embed title/artist/thumbnail/chapters metadata into the file.

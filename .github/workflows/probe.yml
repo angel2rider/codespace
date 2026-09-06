@@ -1,0 +1,64 @@
+name: Probe formats
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Video URL'
+        required: true
+      nonce:
+        description: 'Unique id for this probe (used for the output filename)'
+        required: true
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # yt-dlp needs a JS runtime for YouTube's PO-token checks
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Prepare tools
+        run: |
+          set -e
+          (
+            curl -sL --max-time 90 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+            chmod +x yt-dlp
+          ) &
+          pipx install -q huggingface_hub &
+          wait
+
+      - name: Set up cookies
+        run: |
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" | base64 -d > cookies.txt
+          fi
+
+      - name: Dump available formats
+        run: |
+          export PATH="$PWD:$HOME/.local/bin:$PATH"
+          COOKIES_ARGS=""
+          if [ -f cookies.txt ]; then
+            COOKIES_ARGS="--cookies cookies.txt"
+          fi
+          # -J dumps metadata (formats, title, thumbnail, duration) without downloading
+          yt-dlp --remote-components ejs:github $COOKIES_ARGS -J "${{ inputs.url }}" > meta.json
+          jq '{title, id, thumbnail, duration,
+               resolutions: ([.formats[]
+                 | select(.height != null)
+                 | select((.vcodec // "none") != "none")
+                 | select(.protocol != "m3u8_native")
+                 | {h: .height, fps: (.fps // 0)}]
+                 | group_by(.h)
+                 | map({h: .[0].h, fps: (map(.fps) | max)})
+                 | sort_by(-.h))}' meta.json > "probe-${{ inputs.nonce }}.json"
+          cat "probe-${{ inputs.nonce }}.json"
+
+      - name: Upload probe result
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          hf buckets create Angelrider/video-downloads --private 2>/dev/null || echo "exists"
+          hf buckets cp "probe-${{ inputs.nonce }}.json" "hf://buckets/Angelrider/video-downloads/probes/probe-${{ inputs.nonce }}.json"

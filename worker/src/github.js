@@ -2,6 +2,8 @@
 
 const REPO = "angel2rider/codespace";
 const WORKFLOW = "download.yml";
+const PROBE_WORKFLOW = "probe.yml";
+const BUCKET = "Angelrider/video-downloads";
 
 const STEP_ORDER = [
   "Run denoland/setup-deno@v2",
@@ -39,7 +41,7 @@ export async function triggerDownload(env, url, format) {
         ref: "main",
         inputs: {
           url,
-          format: format === "audio" ? "audio" : "video",
+          format,
           hf_namespace: "Angelrider",
           hf_bucket: "video-downloads",
         },
@@ -97,6 +99,41 @@ export async function proxyFile(path) {
   const len = upstream.headers.get("content-length");
   if (len) headers.set("Content-Length", len);
   return new Response(upstream.body, { status: 200, headers });
+}
+
+// Trigger the probe workflow; the result lands in the bucket as
+// probes/probe-<nonce>.json which the UI polls for.
+export async function probeVideo(env, url) {
+  const nonce = crypto.randomUUID().slice(0, 8);
+  const dispatchRes = await fetch(
+    `https://api.github.com/repos/${REPO}/actions/workflows/${PROBE_WORKFLOW}/dispatches`,
+    {
+      method: "POST",
+      headers: { ...ghHeaders(env), "Content-Type": "application/json" },
+      body: JSON.stringify({ ref: "main", inputs: { url, nonce } }),
+    }
+  );
+  if (dispatchRes.status !== 204) {
+    throw new Error(`Probe dispatch failed (${dispatchRes.status})`);
+  }
+  return { nonce };
+}
+
+// Look up a probe result in the bucket. Absent file = still running.
+export async function getProbe(nonce) {
+  if (!/^[a-f0-9]{8}$/.test(nonce)) return { ready: false };
+  const res = await fetch(
+    `https://huggingface.co/api/buckets/${BUCKET}/tree?recursive=true`
+  );
+  const tree = await res.json();
+  const match = (Array.isArray(tree) ? tree : []).find(
+    (f) => f.path === `probes/probe-${nonce}.json`
+  );
+  if (!match) return { ready: false };
+  const data = await fetch(
+    `https://huggingface.co/api/buckets/${BUCKET}/resolve/${match.path}`
+  ).then((r) => r.json());
+  return { ready: true, ...data };
 }
 
 // Map a run to progress info + result links.

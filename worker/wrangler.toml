@@ -5,3 +5,8 @@ account_id = "cc4668baab24a44ebe315a3807279d15"
 
 [observability]
 enabled = true
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.css", "**/*.client.js"]
+fallthrough = true
