@@ -26,15 +26,13 @@ jobs:
   download:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       # yt-dlp needs a JS runtime for YouTube's PO-token checks
       - uses: denoland/setup-deno@v2
         with:
           deno-version: v2.x
 
-      # Fetch all tools in parallel: yt-dlp (pip, fast) + static ffmpeg
-      # (avoids slow apt) + huggingface_hub CLI for the upload.
+      # Fetch all tools in parallel: standalone yt-dlp binary + static ffmpeg
+      # (avoids slow pip/apt) + huggingface_hub CLI for the upload.
       # Note: the "sleep N seconds as required by the site" wait must be
       # honored - YouTube gates the stream URLs behind it and returns 403 if
       # it is skipped on datacenter IPs.
@@ -42,7 +40,8 @@ jobs:
         run: |
           set -e
           (
-            python3 -m pip install -q --user --break-system-packages yt-dlp
+            curl -sL --max-time 90 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+            chmod +x yt-dlp
           ) &
           (
             mkdir -p ffmpeg-bin
@@ -54,8 +53,8 @@ jobs:
           ) &
           pipx install -q huggingface_hub &
           wait
-          export PATH="$HOME/.local/bin:$PWD/ffmpeg-bin:$PATH"
-          yt-dlp --version
+          export PATH="$PWD:$HOME/.local/bin:$PWD/ffmpeg-bin:$PATH"
+          ./yt-dlp --version
           ffmpeg -version | head -1
           hf --version || true
 
@@ -69,7 +68,7 @@ jobs:
 
       - name: Download video
         run: |
-          export PATH="$HOME/.local/bin:$PWD/ffmpeg-bin:$PATH"
+          export PATH="$PWD:$HOME/.local/bin:$PWD/ffmpeg-bin:$PATH"
           COOKIES_ARGS=""
           if [ -f cookies.txt ]; then
             COOKIES_ARGS="--cookies cookies.txt"
