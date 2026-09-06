@@ -1,0 +1,44 @@
+name: Download YouTube video
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: 'Video or playlist URL'
+        required: true
+      format:
+        description: 'Format: video (mp4) or audio-only (mp3)'
+        required: false
+        default: 'video'
+        type: choice
+        options:
+          - video
+          - audio
+
+jobs:
+  download:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # yt-dlp needs a JS runtime for YouTube's PO-token checks
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install yt-dlp
+        run: pipx install yt-dlp
+
+      - name: Download video
+        run: |
+          if [ "${{ inputs.format }}" == "audio" ]; then
+            yt-dlp -f "ba/b" -x --audio-format mp3 -o "download.%(ext)s" "${{ inputs.url }}"
+          else
+            yt-dlp -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
+          fi
+
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: download
+          path: download.*
