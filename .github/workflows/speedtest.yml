@@ -17,6 +17,12 @@ jobs:
           chmod +x yt-dlp
           ./yt-dlp --version
 
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null 2>&1 || \
+            { sudo apt-get update -qq && sudo apt-get install -y --no-install-recommends ffmpeg >/dev/null; }
+          ffmpeg -version | head -1
+
       - name: Set up cookies
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
@@ -25,13 +31,13 @@ jobs:
 
       - name: Measure sleep per client
         run: |
-          for client in default android_vr android tv web_safari web_embedded ios; do
+          for client in default tv web_embedded android_vr android ios; do
             echo "=== CLIENT: $client ==="
             START=$(date +%s)
             ./yt-dlp --remote-components ejs:github --cookies cookies.txt \
               --extractor-args "youtube:player_client=$client" \
-              -f "18/22/b" --download-sections "*0-1" -o "dl-$client.%(ext)s" \
-              "https://youtu.be/ANmTVYkEtLw" 2>&1 | grep -E "Sleeping|Downloading 1 format|ERROR|Destination" | head -5
+              -f "bv*+ba/b" --download-sections "*0-1" -o "out-%(id)s.%(ext)s" \
+              "https://youtu.be/ANmTVYkEtLw" 2>&1 | grep -E "Sleeping|Downloading 1 format|ERROR" | head -5
             END=$(date +%s)
             echo "elapsed: $((END-START))s"
           done
