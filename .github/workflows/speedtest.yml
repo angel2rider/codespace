@@ -1,0 +1,37 @@
+name: Speed test clients
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Get yt-dlp
+        run: |
+          curl -sL --max-time 60 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+          chmod +x yt-dlp
+          ./yt-dlp --version
+
+      - name: Set up cookies
+        run: |
+          if [ -n "${{ secrets.YT_COOKIES }}" ]; then
+            echo "${{ secrets.YT_COOKIES }}" | base64 -d > cookies.txt
+          fi
+
+      - name: Measure sleep per client
+        run: |
+          for client in default android_vr android tv web_safari web_embedded ios; do
+            echo "=== CLIENT: $client ==="
+            START=$(date +%s)
+            ./yt-dlp --remote-components ejs:github --cookies cookies.txt \
+              --extractor-args "youtube:player_client=$client" \
+              -f "18/22/b" --download-sections "*0-1" -o "dl-$client.%(ext)s" \
+              "https://youtu.be/ANmTVYkEtLw" 2>&1 | grep -E "Sleeping|Downloading 1 format|ERROR|Destination" | head -5
+            END=$(date +%s)
+            echo "elapsed: $((END-START))s"
+          done
