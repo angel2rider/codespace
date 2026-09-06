@@ -28,6 +28,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # yt-dlp needs ffmpeg to merge separate video/audio streams
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       # yt-dlp needs a JS runtime for YouTube's PO-token checks
       - uses: denoland/setup-deno@v2
         with:
