@@ -81,16 +81,17 @@ jobs:
           fi
           if [ "${{ inputs.format }}" == "audio" ]; then
             FMT="-f ba/b -x --audio-format mp3"
+            OUT="%(title).200B [%(id)s].%(ext)s"
           elif [ "${{ inputs.format }}" == "best" ]; then
             FMT="-f bv*+ba/b --merge-output-format mp4"
+            OUT="%(title).200B [%(id)s] [%(height)sp].%(ext)s"
           else
             # Download exactly the requested resolution (or the next one down).
             H="${{ inputs.format }}"
             FMT="-f bv*[height<=$H]+ba/b[height<=$H]/bv*[height<=$H]+ba/b --merge-output-format mp4"
+            OUT="%(title).200B [%(id)s] [%(height)sp].%(ext)s"
           fi
-          # Name files after the video title (ID suffix keeps them unique)
-          # and embed title/artist/thumbnail/chapters metadata into the file.
-          OUT="%(title).200B [%(id)s].%(ext)s"
+          # Embed title/artist/thumbnail/chapters metadata into the file.
           METADATA="--embed-metadata --embed-chapters --convert-thumbnails jpg --embed-thumbnail"
           # Force web_embedded: its stream URLs download instantly (the tv/
           # default clients gate their URLs behind the ad-wait and 403 if

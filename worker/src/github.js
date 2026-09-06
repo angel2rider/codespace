@@ -131,7 +131,7 @@ export async function getProbe(nonce) {
   );
   if (!match) return { ready: false };
   const data = await fetch(
-    `https://huggingface.co/api/buckets/${BUCKET}/resolve/${match.path}`
+    `https://huggingface.co/buckets/${BUCKET}/resolve/${match.path}`
   ).then((r) => r.json());
   return { ready: true, ...data };
 }
