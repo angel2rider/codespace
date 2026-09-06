@@ -35,6 +35,9 @@ jobs:
         run: |
           if [ -n "${{ secrets.YT_COOKIES }}" ]; then
             echo "${{ secrets.YT_COOKIES }}" | base64 -d > cookies.txt
+            echo "Cookies secret found, decoded to cookies.txt"
+          else
+            echo "No YT_COOKIES secret set - downloading without cookies"
           fi
 
       - name: Download video
@@ -42,11 +45,14 @@ jobs:
           COOKIES_ARGS=""
           if [ -f cookies.txt ]; then
             COOKIES_ARGS="--cookies cookies.txt"
+            echo "Cookies: loaded"
+          else
+            echo "Cookies: NOT loaded"
           fi
           if [ "${{ inputs.format }}" == "audio" ]; then
-            yt-dlp $COOKIES_ARGS -f "ba/b" -x --audio-format mp3 -o "download.%(ext)s" "${{ inputs.url }}"
+            yt-dlp --remote-components ejs:github $COOKIES_ARGS -f "ba/b" -x --audio-format mp3 -o "download.%(ext)s" "${{ inputs.url }}"
           else
-            yt-dlp $COOKIES_ARGS -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
+            yt-dlp --remote-components ejs:github $COOKIES_ARGS -f "bv*+ba/b" --merge-output-format mp4 -o "download.%(ext)s" "${{ inputs.url }}"
           fi
 
       - name: Upload result
