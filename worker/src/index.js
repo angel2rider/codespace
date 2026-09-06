@@ -444,7 +444,40 @@ export default {
     const probeMatch = url.pathname.match(/^\/api\/probe\/([a-f0-9]{8})$/);
     if (probeMatch && request.method === "GET") {
       try {
-        return json(await getProbe(probeMatch[1]));
+        return json(await getProbe(env, probeMatch[1]));
+      } catch (e) {
+        return json({ error: e.message }, 502);
+      }
+    }
+
+    // The probe runner POSTs its result here (authenticated with the shared
+    // WORKER_SECRET) instead of pushing through a third-party store.
+    if (url.pathname === "/api/probe/result" && request.method === "POST") {
+      if (request.headers.get("x-probe-secret") !== env.WORKER_SECRET) {
+        return json({ error: "Unauthorized" }, 401);
+      }
+      let body;
+      try {
+        body = await request.json();
+      } catch {
+        return json({ error: "Invalid JSON body" }, 400);
+      }
+      if (!body.nonce || !/^[a-f0-9]{8}$/.test(body.nonce)) {
+        return json({ error: "Missing or invalid nonce" }, 400);
+      }
+      try {
+        await env.PROBES.put(
+          `probe:${body.nonce}`,
+          JSON.stringify({
+            title: body.title || "",
+            id: body.id || "",
+            thumbnail: body.thumbnail || "",
+            duration: body.duration || 0,
+            resolutions: body.resolutions || [],
+          }),
+          { expirationTtl: 3600 }
+        );
+        return json({ ok: true });
       } catch (e) {
         return json({ error: e.message }, 502);
       }

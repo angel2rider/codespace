@@ -101,8 +101,8 @@ export async function proxyFile(path) {
   return new Response(upstream.body, { status: 200, headers });
 }
 
-// Trigger the probe workflow; the result lands in the bucket as
-// probes/probe-<nonce>.json which the UI polls for.
+// Trigger the probe workflow. The runner POSTs the result straight back to
+// this Worker (see /api/probe/result), which stores it in KV under the nonce.
 export async function probeVideo(env, url) {
   const nonce = crypto.randomUUID().slice(0, 8);
   const dispatchRes = await fetch(
@@ -110,7 +110,7 @@ export async function probeVideo(env, url) {
     {
       method: "POST",
       headers: { ...ghHeaders(env), "Content-Type": "application/json" },
-      body: JSON.stringify({ ref: "main", inputs: { url, nonce } }),
+      body: JSON.stringify({ ref: "main", inputs: { url, nonce, callback: env.WORKER_URL } }),
     }
   );
   if (dispatchRes.status !== 204) {
@@ -119,20 +119,11 @@ export async function probeVideo(env, url) {
   return { nonce };
 }
 
-// Look up a probe result in the bucket. Absent file = still running.
-export async function getProbe(nonce) {
-  if (!/^[a-f0-9]{8}$/.test(nonce)) return { ready: false };
-  const res = await fetch(
-    `https://huggingface.co/api/buckets/${BUCKET}/tree?recursive=true`
-  );
-  const tree = await res.json();
-  const match = (Array.isArray(tree) ? tree : []).find(
-    (f) => f.path === `probes/probe-${nonce}.json`
-  );
-  if (!match) return { ready: false };
-  const data = await fetch(
-    `https://huggingface.co/buckets/${BUCKET}/resolve/${match.path}`
-  ).then((r) => r.json());
+// Read a probe result from KV. Absent key = still running.
+export async function getProbe(env, nonce) {
+  if (!/^[a-f0-9]{8}$/.test(nonce) || !env.PROBES) return { ready: false };
+  const data = await env.PROBES.get(`probe:${nonce}`, "json");
+  if (!data) return { ready: false };
   return { ready: true, ...data };
 }
 

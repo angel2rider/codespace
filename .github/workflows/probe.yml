@@ -7,7 +7,10 @@ on:
         description: 'Video URL'
         required: true
       nonce:
-        description: 'Unique id for this probe (used for the output filename)'
+        description: 'Unique id for this probe (used for the result key)'
+        required: true
+      callback:
+        description: 'Worker base URL to POST the result to'
         required: true
 
 jobs:
@@ -19,15 +22,11 @@ jobs:
         with:
           deno-version: v2.x
 
-      - name: Prepare tools
+      - name: Get yt-dlp
         run: |
-          set -e
-          (
-            curl -sL --max-time 90 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
-            chmod +x yt-dlp
-          ) &
-          pipx install -q huggingface_hub &
-          wait
+          curl -sL --max-time 90 -o yt-dlp https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp
+          chmod +x yt-dlp
+          ./yt-dlp --version
 
       - name: Set up cookies
         run: |
@@ -37,13 +36,13 @@ jobs:
 
       - name: Dump available formats
         run: |
-          export PATH="$PWD:$HOME/.local/bin:$PATH"
+          export PATH="$PWD:$PATH"
           COOKIES_ARGS=""
           if [ -f cookies.txt ]; then
             COOKIES_ARGS="--cookies cookies.txt"
           fi
           # -J dumps metadata (formats, title, thumbnail, duration) without downloading
-          yt-dlp --remote-components ejs:github $COOKIES_ARGS -J "${{ inputs.url }}" > meta.json
+          ./yt-dlp --remote-components ejs:github $COOKIES_ARGS -J "${{ inputs.url }}" > meta.json
           jq '{title, id, thumbnail, duration,
                resolutions: ([.formats[]
                  | select(.height != null)
@@ -52,13 +51,17 @@ jobs:
                  | {h: .height, fps: (.fps // 0)}]
                  | group_by(.h)
                  | map({h: .[0].h, fps: (map(.fps) | max)})
-                 | sort_by(-.h))}' meta.json > "probe-${{ inputs.nonce }}.json"
-          cat "probe-${{ inputs.nonce }}.json"
+                 | sort_by(-.h))}' meta.json > probe.json
+          jq -s '.[0] * {nonce: .[1].nonce}' probe.json <(echo '{"nonce": "${{ inputs.nonce }}"}') > payload.json
+          cat payload.json
 
-      - name: Upload probe result
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      - name: Post result to Worker
         run: |
-          export PATH="$HOME/.local/bin:$PATH"
-          hf buckets create Angelrider/video-downloads --private 2>/dev/null || echo "exists"
-          hf buckets cp "probe-${{ inputs.nonce }}.json" "hf://buckets/Angelrider/video-downloads/probes/probe-${{ inputs.nonce }}.json"
+          HTTP=$(curl -s -o /tmp/resp.txt -w "%{http_code}" \
+            -X POST "${{ inputs.callback }}/api/probe/result" \
+            -H "Content-Type: application/json" \
+            -H "x-probe-secret: ${{ secrets.WORKER_SECRET }}" \
+            --data-binary @payload.json)
+          echo "Worker responded: $HTTP"
+          cat /tmp/resp.txt
+          test "$HTTP" == "200"
