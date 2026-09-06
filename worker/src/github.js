@@ -111,12 +111,19 @@ export async function getStatus(env, runId) {
     return { ...base, stage: "Failed - check the Actions log", htmlUrl: run.html_url };
   }
 
-  // Success: find files uploaded while this run was active.
+  // Success: list only files uploaded after this run started, so each
+  // run's status shows its own result (not the whole bucket history).
+  const runStart = new Date(run.created_at).getTime() - 5_000; // small slack
   const bucket = await fetch(
     `https://huggingface.co/api/buckets/Angelrider/video-downloads/tree?recursive=true`
   ).then((r) => r.json());
   const files = (Array.isArray(bucket) ? bucket : [])
-    .filter((f) => f.type === "file" && /\.(mp4|mp3)$/i.test(f.path))
+    .filter(
+      (f) =>
+        f.type === "file" &&
+        /\.(mp4|mp3)$/i.test(f.path) &&
+        new Date(f.uploadedAt).getTime() >= runStart
+    )
     .map((f) => ({
       name: f.path,
       size: f.size,
