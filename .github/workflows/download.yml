@@ -35,17 +35,14 @@ jobs:
 
       # Fetch all tools in parallel: yt-dlp (pip, fast) + static ffmpeg
       # (avoids slow apt) + huggingface_hub CLI for the upload.
-      # Also patches yt-dlp to skip the "sleep N seconds as required by the
-      # site" wait (YouTube's ad-delay on datacenter IPs, ~15-20s per video).
+      # Note: the "sleep N seconds as required by the site" wait must be
+      # honored - YouTube gates the stream URLs behind it and returns 403 if
+      # it is skipped on datacenter IPs.
       - name: Prepare tools
         run: |
           set -e
           (
             python3 -m pip install -q --user --break-system-packages yt-dlp
-            SP="$(python3 -m site --user-site)"
-            sed -i 's/available_at - int(time.time())/-int(time.time())/' \
-              "$SP/yt_dlp/downloader/common.py"
-            grep -c -- "-int(time.time())" "$SP/yt_dlp/downloader/common.py"
           ) &
           (
             mkdir -p ffmpeg-bin
