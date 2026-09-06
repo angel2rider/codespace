@@ -58,9 +58,11 @@ Repo → **Actions** → *Download YouTube video* → **Run workflow** with:
 | Input | Required | Default | Notes |
 |---|---|---|---|
 | `url` | ✔ | — | Video or playlist URL |
-| `format` | | `video` | `video` → mp4 (merged), `audio` → mp3 |
+| `format` | | `best` | `best` (mp4) · `audio` (mp3) · a max height: `2160` `1440` `1080` `720` `480` `360` |
 | `hf_namespace` | ✔ | — | HF username or org, e.g. `Angelrider` |
 | `hf_bucket` | | `video-downloads` | Created automatically (private on first creation) |
+
+A second workflow, **Probe formats** (`.github/workflows/probe.yml`), runs `yt-dlp -J` on a URL and dumps the available resolutions (height + fps) to `probes/probe-<nonce>.json` in the bucket — that's what powers the site's resolution picker.
 
 ### CLI
 
@@ -76,7 +78,8 @@ gh run watch                     # or grab the run id from `gh run list`
 
 ## What you get
 
-- **Naming:** `<YouTube title> [<video id>].mp4` — the ID suffix keeps re-uploads distinct.
+- **Naming:** `<YouTube title> [<video id>] [<height>p].mp4` for video (the height suffix keeps resolution variants of the same video distinct), `<YouTube title> [<video id>].mp3` for audio.
+- **Resolution picking:** the site probes available heights first (via the probe workflow), then downloads exactly what you pick — or the next available height below it if YouTube doesn't serve that exact size.
 - **Embedded metadata** (visible in VLC/Plex/Infuse): title, uploader, date, thumbnail, and YouTube chapters (`--embed-metadata --embed-chapters --embed-thumbnail`).
 - **Storage:** files land in the bucket at `huggingface.co/buckets/<namespace>/<bucket>` and are served by HF's CDN. Re-downloading identical content is nearly instant thanks to Xet chunk-level deduplication (only changed chunks upload).
 
