@@ -66,6 +66,39 @@ export async function triggerDownload(env, url, format) {
   throw new Error("Could not resolve run id after dispatch");
 }
 
+// Resolve a bucket file to its direct signed CDN URL (fresh per click).
+// The ?download=true variant makes the CDN serve it as an attachment, so
+// the browser downloads the file instead of opening it.
+export async function resolveFileUrl(path) {
+  const res = await fetch(
+    `https://huggingface.co/buckets/Angelrider/video-downloads/resolve/` +
+      `${encodeURIComponent(path).replace(/%2F/g, "/")}?download=true`,
+    { redirect: "manual" }
+  );
+  if (res.status >= 300 && res.status < 400) {
+    return res.headers.get("location");
+  }
+  if (res.ok) return res.url;
+  throw new Error(`Could not resolve file (${res.status})`);
+}
+
+// Stream a bucket file through the Worker with a clean Content-Disposition,
+// so "Save as" shows the real name (HF's signed URLs double-encode it).
+export async function proxyFile(path) {
+  const cdnUrl = await resolveFileUrl(path);
+  const upstream = await fetch(cdnUrl, { redirect: "follow" });
+  if (!upstream.ok || !upstream.body) {
+    throw new Error(`Upstream fetch failed (${upstream.status})`);
+  }
+  const safeName = path.replace(/[\\"\r\n]/g, "_");
+  const headers = new Headers();
+  headers.set("Content-Type", upstream.headers.get("content-type") || "application/octet-stream");
+  headers.set("Content-Disposition", `attachment; filename*=UTF-8''${encodeURIComponent(safeName)}`);
+  const len = upstream.headers.get("content-length");
+  if (len) headers.set("Content-Length", len);
+  return new Response(upstream.body, { status: 200, headers });
+}
+
 // Map a run to progress info + result links.
 export async function getStatus(env, runId) {
   const res = await fetch(
@@ -111,9 +144,10 @@ export async function getStatus(env, runId) {
     return { ...base, stage: "Failed - check the Actions log", htmlUrl: run.html_url };
   }
 
-  // Success: list only files uploaded after this run started, so each
+  // Success: list only files uploaded while this run was active, so each
   // run's status shows its own result (not the whole bucket history).
   const runStart = new Date(run.created_at).getTime() - 5_000; // small slack
+  const runEnd = run.updated_at ? new Date(run.updated_at).getTime() + 5_000 : Date.now();
   const bucket = await fetch(
     `https://huggingface.co/api/buckets/Angelrider/video-downloads/tree?recursive=true`
   ).then((r) => r.json());
@@ -122,14 +156,13 @@ export async function getStatus(env, runId) {
       (f) =>
         f.type === "file" &&
         /\.(mp4|mp3)$/i.test(f.path) &&
-        new Date(f.uploadedAt).getTime() >= runStart
+        new Date(f.uploadedAt).getTime() >= runStart &&
+        new Date(f.uploadedAt).getTime() <= runEnd
     )
     .map((f) => ({
       name: f.path,
       size: f.size,
-      url:
-        `https://huggingface.co/buckets/Angelrider/video-downloads/resolve/` +
-        `${encodeURIComponent(f.path).replace(/%2F/g, "/")}?download=true`,
+      url: null, // resolved lazily via /api/file (proxies with a clean filename)
     }));
   return { ...base, files };
 }
