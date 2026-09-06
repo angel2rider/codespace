@@ -78,6 +78,10 @@ jobs:
           else
             FMT="-f bv*+ba/b --merge-output-format mp4"
           fi
+          # Name files after the video title (ID suffix keeps them unique)
+          # and embed title/artist/thumbnail/chapters metadata into the file.
+          OUT="%(title).200B [%(id)s].%(ext)s"
+          METADATA="--embed-metadata --embed-chapters --convert-thumbnails jpg --embed-thumbnail"
           # Force web_embedded: its stream URLs download instantly (the tv/
           # default clients gate their URLs behind the ad-wait and 403 if
           # skipped). Try progressively more compatible clients on failure.
@@ -85,7 +89,7 @@ jobs:
             echo "--- trying client: $client ---"
             if yt-dlp --remote-components ejs:github $COOKIES_ARGS \
               --extractor-args "youtube:player_client=$client" \
-              $FMT -o "download.%(ext)s" "${{ inputs.url }}"; then
+              $FMT $METADATA -o "$OUT" "${{ inputs.url }}"; then
               break
             fi
           done
@@ -94,16 +98,19 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          if [ "${{ inputs.format }}" == "audio" ]; then
-            FILE="download.mp3"
-          else
-            FILE="download.mp4"
-          fi
+          export PATH="$HOME/.local/bin:$PATH"
           BUCKET="${{ inputs.hf_namespace }}/${{ inputs.hf_bucket }}"
-          DEST="hf://buckets/$BUCKET/video-$(date +%Y%m%d-%H%M%S).${FILE##*.}"
 
           # Create the bucket if it doesn't exist yet (private by default)
           hf buckets create "$BUCKET" --private 2>/dev/null || echo "Bucket already exists"
 
-          hf buckets cp "$FILE" "$DEST"
-          echo "Uploaded to: $DEST"
+          shopt -s nullglob
+          FILES=(*.mp4 *.mp3)
+          if [ ${#FILES[@]} -eq 0 ]; then
+            echo "No media files found to upload" && exit 1
+          fi
+          for f in "${FILES[@]}"; do
+            DEST="hf://buckets/$BUCKET/$(basename "$f")"
+            hf buckets cp "$f" "$DEST"
+            echo "Uploaded to: $DEST"
+          done
